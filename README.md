@@ -1,5 +1,8 @@
 # Post-Earnings Announcement Drift (PEAD)
 
+[![R](https://img.shields.io/badge/R-%3E%3D4.1-276DC3?logo=r&logoColor=white)](https://www.r-project.org/)
+[![WRDS](https://img.shields.io/badge/Data-WRDS-003366)](https://wrds-www.wharton.upenn.edu/)
+
 An R pipeline to construct standardized earnings surprises (SUEs) for U.S. equity
 research via WRDS.
 
