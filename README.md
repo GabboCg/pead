@@ -59,17 +59,6 @@ data/esurprises.rds
 
 `sue1` and `sue2` are Compustat-based; `sue3` is IBES-based.
 
----
-
-## Files
-
-```
-ESurprises.R        Main script — builds esurprises from raw WRDS data
-R/get_iclink.R      Builds the CRSP–IBES link table (replicates WRDS ICLINK)
-data/esurprises.rds Output — one row per firm-quarter (unique on gvkey × fyearq × fqtr)
-pead_v5.ipynb       Original Python reference implementation (Drechsler, WRDS)
-```
-
 ## Requirements
 
 - R packages: `tidyverse`, `lubridate`, `scales`, `RSQLite`, `dbplyr`, `RPostgres`
