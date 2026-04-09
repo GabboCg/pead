@@ -120,10 +120,14 @@ if (all_sp500 == 1) {
 iclink <- get_iclink(wrds)
 
 iclink_hq <- iclink |>
-    filter(score <= 1)
+    filter(score <= 1) |>
+    group_by(permno) |>
+    filter(score == min(score)) |>
+    slice(1) |>
+    ungroup()
 
 gvkey <- gvkey |>
-    left_join(iclink_hq, by = "permno", relationship = "many-to-many")
+    left_join(iclink_hq, by = "permno", relationship = "many-to-one")
 
 # Fill missing ticker with ibtic
 gvkey <- gvkey |>
@@ -293,7 +297,7 @@ expand_anndats <- pivot_longer(uniq_anndats, -anndats, names_to = "prior", value
 # Merge with CRSP trading dates
 tradedates <- expand_anndats |>
     left_join(
-        crsp_dats, by = "prior_date"
+        crsp_dats, by = "prior_date", relationship = "many-to-many"
     ) |>
     as_tibble() |>
     # Create the dgap (days gap) variable for min selection
@@ -324,7 +328,7 @@ dbClearResult(cfacshr_db)
 ibes_anndats <- ibes_anndats |>
     as_tibble() |>
     left_join(
-        tradedates, by = "anndats"
+        tradedates, by = "anndats", relationship = "many-to-many"
     ) |>
     left_join(
         cfacshr |>
@@ -341,13 +345,15 @@ ibes_anndats <- ibes_anndats |>
 # New_value is the estimate adjusted to be on the 
 # same basis with reported earnings.
 ibes1 <- ibes1 |>
-    inner_join(ibes_anndats, by = c("permno", "anndats")) |>
+    inner_join(ibes_anndats, 
+               by = c("permno", "anndats"), relationship = "many-to-many") |>
     as_tibble() |>
     select(-c("anndats", "date")) |>
     rename(cfacshr_ann = cfacshr) |> 
     inner_join(
         ibes_anndats |>
-            mutate(repdats = anndats), by = c("permno", "repdats")
+            mutate(repdats = anndats), 
+        by = c("permno", "repdats"), relationship = "many-to-many"
     ) |>
     as_tibble() |>
     select(-c("anndats", "date")) |>
@@ -394,7 +400,13 @@ fundq_db <- dbSendQuery(wrds, paste0("select gvkey, fyearq, fqtr, conm, datadate
 
 fundq <- dbFetch(fundq_db, n = -1) |>
     as_tibble() |>
-    filter((atq > 0 | !is.na(saleq)) & !is.na(datafqtr))
+    filter((atq > 0 | !is.na(saleq)) & !is.na(datafqtr)) |>
+    # Some firms have two rows per quarter due to fiscal year end changes;
+    # keep the most recent datadate per (gvkey, fyearq, fqtr)
+    group_by(gvkey, fyearq, fqtr) |>
+    filter(datadate == max(datadate)) |>
+    slice(1) |>
+    ungroup()
 
 dbClearResult(fundq_db)
 
@@ -417,9 +429,15 @@ gvkey_maxdt1 <- gvkey |>
 
 gvkey_dt1 <- gvkey_mindt1 |>
     inner_join(
-        gvkey_maxdt1, 
+        gvkey_maxdt1,
         by = c("gvkey", "ticker")
-    ) 
+    ) |>
+    # Keep one ticker per gvkey: prefer widest coverage, then most recent
+    group_by(gvkey) |>
+    filter(maxdate == max(maxdate)) |>
+    filter((maxdate - mindate) == max(maxdate - mindate)) |>
+    slice(1) |>
+    ungroup()
 
 # Use the date range to merge
 comp <- fundq |> 
@@ -447,27 +465,31 @@ sue <- comp |>
     mutate(
         # Handling same qtr previous year
         diff_fyearq = fyearq - lag(fyearq, 1),
-        laggvkey = lag(gvkey, 1),
-        lagadj = ifelse(diff_fyearq == 1, lag(ajexq, 1), NA),
-        lageps_p = ifelse(diff_fyearq == 1, lag(epspxq, 1), NA),
-        lageps_d = ifelse(diff_fyearq == 1, lag(epsfxq, 1), NA),
-        lagshr_p = ifelse(diff_fyearq == 1, lag(cshprq, 1), NA),
-        lagshr_d = ifelse(diff_fyearq == 1, lag(cshfdq, 1), NA),
-        lagspiq = ifelse(diff_fyearq == 1, lag(spiq, 1), NA),
+        laggvkey    = lag(gvkey, 1),
+        lagadj      = ifelse(diff_fyearq == 1, lag(ajexq, 1), NA),
+        lageps_p    = ifelse(diff_fyearq == 1, lag(epspxq, 1), NA),
+        lageps_d    = ifelse(diff_fyearq == 1, lag(epsfxq, 1), NA),
+        lagshr_p    = ifelse(diff_fyearq == 1, lag(cshprq, 1), NA),
+        lagshr_d    = ifelse(diff_fyearq == 1, lag(cshfdq, 1), NA),
+        lagspiq     = ifelse(diff_fyearq == 1, lag(spiq, 1), NA),
         # Handling first gvkey
-        lagadj = ifelse(gvkey != laggvkey, NA, lagadj),
+        lagadj   = ifelse(gvkey != laggvkey, NA, lagadj),
         lageps_p = ifelse(gvkey != laggvkey, NA, lageps_p),
         lageps_d = ifelse(gvkey != laggvkey, NA, lageps_d),
         lagshr_p = ifelse(gvkey != laggvkey, NA, lagshr_p),
         lagshr_d = ifelse(gvkey != laggvkey, NA, lagshr_d),
-        lagspiq = ifelse(gvkey != laggvkey, NA, lagspiq),
+        lagspiq  = ifelse(gvkey != laggvkey, NA, lagspiq),
         # Handling reporting basis 
         # Basis = P and missing are treated the same
-        basis = ifelse(is.na(basis), "missing", basis),
+        basis   = ifelse(is.na(basis), "missing", basis),
         actual1 = ifelse(basis == "D", epsfxq / ajexq, epspxq / ajexq),
-        actual2 = ifelse(basis == 'D', (ifelse(is.na(epsfxq), 0, epsfxq) - ifelse(is.na(0.65 * spiq / cshfdq), 0, 0.65 * spiq / cshfdq)) / ajexq, (ifelse(is.na(epspxq), 0, epspxq) - ifelse(is.na(0.65 * spiq / cshprq), 0, 0.65 * spiq / cshprq)) / ajexq),
+        actual2 = ifelse(basis == 'D', 
+                         (ifelse(is.na(epsfxq), 0, epsfxq) - ifelse(is.na(0.65 * spiq / cshfdq), 0, 0.65 * spiq / cshfdq)) / ajexq, 
+                         (ifelse(is.na(epspxq), 0, epspxq) - ifelse(is.na(0.65 * spiq / cshprq), 0, 0.65 * spiq / cshprq)) / ajexq),
         expected1 = ifelse(basis == "D", lageps_d / lagadj, lageps_p / lagadj),
-        expected2 = ifelse(basis == "D", (ifelse(is.na(lageps_d), 0, lageps_d) - ifelse(is.na(0.65 * lagspiq / lagshr_d), 0, 0.65 * lagspiq / lagshr_d)) / lagadj, (ifelse(is.na(lageps_p), 0, lageps_p) - ifelse(is.na(0.65 * lagspiq / lagshr_p), 0, 0.65 * lagspiq / lagshr_p)) / lagadj),
+        expected2 = ifelse(basis == "D", 
+                           (ifelse(is.na(lageps_d), 0, lageps_d) - ifelse(is.na(0.65 * lagspiq / lagshr_d), 0, 0.65 * lagspiq / lagshr_d)) / lagadj, 
+                           (ifelse(is.na(lageps_p), 0, lageps_p) - ifelse(is.na(0.65 * lagspiq / lagshr_p), 0, 0.65 * lagspiq / lagshr_p)) / lagadj),
         # SUE calculations
         sue1 = (actual1 - expected1) / (prccq / ajexq),
         sue2 = (actual2 - expected2) / (prccq / ajexq),
@@ -503,7 +525,7 @@ eads1 <- expand_rdq |>
     left_join(
         crsp_dats |>
             mutate(post_date = date),
-        by = "post_date"
+        by = "post_date", relationship = "many-to-many"
     ) |>
     mutate(
         # create the dgap (days gap) variable for min selection
