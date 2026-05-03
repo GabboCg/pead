@@ -23,7 +23,7 @@ library(dbplyr)
 library(RPostgres)
 
 # Load auxiliary functions
-source("R/get_iclink.R")
+source("R/get-iclink.R")
 
 # Connection
 wrds <- dbConnect(
